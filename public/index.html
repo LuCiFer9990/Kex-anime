@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#09090f"><title>Ani-CLI Web</title><link rel="stylesheet" href="/styles.css"><script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17"></script></head>
+<body><div class="app"><header><a class="logo" href="/">ani<span>·</span>cli</a><nav><a class="active" href="#discover">Discover</a><a href="#popular">Popular</a><a href="#library">My list</a></nav><label class="search">⌕ <input id="search" placeholder="Search anime..." autocomplete="off"></label></header>
+<section class="hero"><div><small>YOUR ANIME SPACE</small><h1>Find your next<br>favorite story.</h1><p>Discover anime, build your list, and keep your place across episodes.</p><button class="button primary" id="explore">Explore anime →</button></div></section>
+<div class="toolbar"><h2 id="heading">Trending this season</h2><div class="filters"><button class="chip active" data-sort="TRENDING_DESC">Trending</button><button class="chip" data-sort="POPULARITY_DESC">Popular</button><button class="chip" data-sort="SCORE_DESC">Top rated</button></div></div>
+<div id="catalog" class="grid"><p class="empty">Loading catalog…</p></div>
+<section id="library" class="library"><div class="toolbar"><h2>My list</h2><span class="sub">Saved on this device</span></div><div id="favorites" class="grid compact"><p class="empty">Your list is empty. Add anime with the ☆ button.</p></div></section>
+<section class="library"><div class="toolbar"><h2>Continue watching</h2><span class="sub">Your recent progress</span></div><div id="history" class="history"><p class="empty">No watch history yet.</p></div></section>
+<footer>Metadata by AniList. This app plays direct HLS/MP4 sources configured by the site operator and does not scrape streaming websites.</footer></div>
+<div class="overlay" id="detail"><article class="dialog"><button class="x" data-close>×</button><div id="detail-body"></div></article></div>
+<div class="overlay" id="watch"><article class="dialog player-dialog"><button class="x" data-close>×</button><div class="player-top"><div><small>NOW PLAYING</small><h2 id="watch-title"></h2></div><span id="watch-ep" class="sub"></span></div><video id="video" controls playsinline></video><p id="player-message" class="notice">Checking for an authorized stream…</p></article></div>
+<script src="/app.js"></script></body></html>
