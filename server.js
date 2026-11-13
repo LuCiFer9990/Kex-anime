@@ -176,7 +176,7 @@ app.get("/api/anime/:id/sources/:episode", async (req, res) => {
         const hosts = [...new Set([...source.proxyHosts, ...proxyHostsFromEnv].map(x => String(x).toLowerCase()))];
         const url = new URL(source.url);
         if (url.protocol !== "https:" || !hosts.includes(url.hostname.toLowerCase())) return source;
-        const proxied = { ...source, url: makeStreamUrl(req, url.toString(), source.proxyReferer, hosts) };
+        const proxied = { ...source, fallbackUrl: source.url, url: makeStreamUrl(req, url.toString(), source.proxyReferer, hosts) };
         delete proxied.proxyReferer;
         delete proxied.proxyHosts;
         return proxied;
