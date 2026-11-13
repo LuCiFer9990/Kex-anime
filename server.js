@@ -31,16 +31,79 @@ app.use("/api", (req, res, next) => {
   req.clientId = id;
   next();
 });
-const query = (text, variables = {}) => fetch("https://graphql.anilist.co", {
-  method: "POST",
-  headers: { "content-type": "application/json", "accept": "application/json" },
-  body: JSON.stringify({ query: text, variables })
-}).then(async r => {
-  if (!r.ok) throw new Error(`AniList returned ${r.status}`);
-  const data = await r.json();
-  if (data.errors?.length) throw new Error(data.errors[0].message);
-  return data.data;
-});
+// AniList rate limits requests. Cache identical GraphQL reads and serialize
+// outbound requests so a burst from the homepage does not fan out upstream.
+const anilistCache = new Map();
+const anilistInFlight = new Map();
+let anilistQueue = Promise.resolve();
+let nextAniListRequestAt = 0;
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function requestAniList(payload) {
+  const run = anilistQueue.then(async () => {
+    const wait = Math.max(0, nextAniListRequestAt - Date.now());
+    if (wait) await sleep(wait);
+    nextAniListRequestAt = Date.now() + 700;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const response = await fetch("https://graphql.anilist.co", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "accept": "application/json",
+          "user-agent": "Kex-Anime/1.0 (AniList GraphQL client)"
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(20000)
+      });
+      if (response.status === 429) {
+        const retryAfter = Number(response.headers.get("retry-after"));
+        const delay = Number.isFinite(retryAfter) && retryAfter > 0
+          ? Math.min(retryAfter * 1000, 60000)
+          : Math.min(2000 * (2 ** attempt), 30000);
+        if (attempt === 3) {
+          throw new Error(`AniList rate limit reached. Please wait about ${Math.ceil(delay / 1000)} seconds and refresh.`);
+        }
+        await sleep(delay);
+        continue;
+      }
+      if (response.status >= 500 && attempt < 3) {
+        await sleep(1000 * (attempt + 1));
+        continue;
+      }
+      if (!response.ok) throw new Error(`AniList returned HTTP ${response.status}`);
+      const data = await response.json();
+      if (data.errors?.length) {
+        const message = data.errors[0].message || "GraphQL request failed";
+        throw new Error(message);
+      }
+      return data.data;
+    }
+    throw new Error("AniList is temporarily unavailable. Please try again shortly.");
+  });
+  anilistQueue = run.catch(() => {});
+  return run;
+}
+
+const query = async (text, variables = {}) => {
+  const key = JSON.stringify([text, variables]);
+  const cached = anilistCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+  if (anilistInFlight.has(key)) return anilistInFlight.get(key);
+
+  const ttl = text.includes("Page(page:1") ? 2 * 60 * 1000 : 15 * 60 * 1000;
+  const pending = requestAniList({ query: text, variables }).then(data => {
+    anilistCache.set(key, { data, expiresAt: Date.now() + ttl });
+    if (anilistCache.size > 500) {
+      const now = Date.now();
+      for (const [cacheKey, entry] of anilistCache) {
+        if (entry.expiresAt <= now || anilistCache.size > 400) anilistCache.delete(cacheKey);
+      }
+    }
+    return data;
+  }).finally(() => anilistInFlight.delete(key));
+  anilistInFlight.set(key, pending);
+  return pending;
+};
 const mediaFields = `id title { romaji english native } description(asHtml:false) coverImage { extraLarge large } bannerImage episodes averageScore seasonYear season format status genres duration studios { nodes { name } }`;
 const mediaQuery = `query($id:Int){ Media(id:$id,type:ANIME){ ${mediaFields} } }`;
 const mapError = (res, e) => res.status(502).json({ error: e.message || "Upstream service unavailable" });

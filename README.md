@@ -22,6 +22,10 @@ npm start
 ```
 Open http://localhost:3000.
 
+
+### AniList rate limits
+The server caches identical catalog/search responses briefly and anime detail responses longer, coalesces simultaneous identical requests, spaces upstream requests, and retries HTTP 429/temporary 5xx responses with backoff. AniList may still impose a temporary limit during heavy traffic; if that happens, wait briefly before refreshing. The cache is in-memory and resets when the Render service restarts.
+
 ## Built-in scraper
 The default playback resolver makes normal HTTPS page requests to the site configured by `HIANIME_BASE_URL`. It follows the same broad flow used by ani-cli: search the website, retrieve the selected anime's episode markup, retrieve the episode's server markup, open the selected embed page, and read its exposed HLS playlist and subtitle tracks.
 
