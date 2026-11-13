@@ -6,7 +6,7 @@ function decodeEntities(value = "") {
   return value.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#039;|&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
 }
 function attr(html, name) {
-  const match = html.match(new RegExp('\\\\b' + name + '=["\\\\']([^"\\\\']*)["\\\\']', "i"));
+  const match = html.match(new RegExp(`(?:^|\\\\s)${name}=["']([^"']*)["']`, "i"));
   return match ? decodeEntities(match[1]) : "";
 }
 function normalize(value) {
@@ -39,11 +39,12 @@ export async function searchAnime(query) {
   const results = [];
   const blocks = html.split(/<div[^>]+class=["'][^"']*film-detail[^"']*["'][^>]*>/i).slice(1);
   for (const block of blocks) {
-    const match = block.match(/<a\\s+[^>]*href=["'](?:https?:\\/\\/[^/]+)?\\/watch\\/([^"'?]+)[^"']*["'][^>]*title=["']([^"']+)["']/i)
-      || block.match(/<a\\s+[^>]*title=["']([^"']+)["'][^>]*href=["'](?:https?:\\/\\/[^/]+)?\\/watch\\/([^"'?]+)[^"']*["']/i);
-    if (!match) continue;
-    const slug = match[1].includes("/") ? match[1] : match[1];
-    const title = decodeEntities(match[2] || "");
+    const href = block.match(/href=["'](?:https?:\\/\\/[^/]+)?\\/watch\\/([^"'?]+)/i);
+    const heading = block.match(/title=["']([^"']+)["']/i);
+    if (!href || !heading) continue;
+    const slug = href[1];
+    const title = decodeEntities(heading[1]);
+
     if (slug && title) results.push({ slug, title });
     if (results.length >= 20) break;
   }
@@ -83,7 +84,7 @@ export async function resolveHiAnimeEpisode({ anime, episode }) {
   const serverHtml = (await getText(serverUrl.toString())).replace(/\\\\+"/g, '"').replace(/\\\\\\//g, "/");
   const serverBlocks = serverHtml.split(/server-item/i).slice(1);
   const server = serverBlocks.find(block => /data-server-name=["']ZokoAnime["']/i.test(block)
-    && new RegExp('data-type=["\\\\']sub["\\\\']', "i").test(block));
+    && /data-type=["']sub["']/i.test(block));
   if (!server) throw new Error("HiAnime did not return the supported ZokoAnime sub server");
   const encoded = attr(server, "data-hash");
   if (!encoded) throw new Error("The selected server did not include an embed link");
