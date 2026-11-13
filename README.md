@@ -34,6 +34,38 @@ curl -X POST http://localhost:3000/api/admin/sources \
 
 Supported types: hls and mp4. Configure CORS on your media host to allow your app's origin. Remove a source with DELETE /api/admin/sources/:animeId/:episode and the same admin header.
 
+## Browser playback provider integration
+
+The browser app can now use a pluggable provider API. Set `PLAYBACK_PROVIDER_URL` to an HTTPS endpoint you operate or are authorized to use, and optionally set `PLAYBACK_PROVIDER_TOKEN`. When no manually configured source exists for an episode, the server sends a JSON `POST` request to that endpoint:
+
+```json
+{
+  "anime": { "id": 21, "title": "Example anime", "romaji": "Example anime", "english": "Example anime", "seasonYear": 2024, "format": "TV" },
+  "episode": 1
+}
+```
+
+The endpoint should return JSON in this shape:
+
+```json
+{
+  "provider": "My authorized catalog",
+  "sources": [
+    {
+      "label": "1080p",
+      "type": "hls",
+      "quality": "1080p",
+      "url": "https://media.example.com/episode-1/master.m3u8",
+      "subtitles": [
+        { "url": "https://media.example.com/episode-1/en.vtt", "label": "English", "lang": "en", "default": true }
+      ]
+    }
+  ]
+}
+```
+
+Only HTTPS source and subtitle URLs are accepted. The player uses HLS.js where supported, offers adaptive/manual HLS quality selection, and attaches WebVTT subtitle tracks. Native HLS quality selection is handled by the browser. Cross-origin media and subtitle hosts must permit playback from your app origin. The adapter does not scrape third-party streaming sites, defeat DRM, or bypass provider access controls. A compatible provider API and its authorization are required; no provider is bundled or enabled by default. Manual admin-configured sources continue to take precedence.
+
 ## API
 - GET /api/anime/trending
 - GET /api/anime/search?q=...
