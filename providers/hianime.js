@@ -81,7 +81,7 @@ function buildSource(config, playlist, embedUrl, serverName) {
         default: Boolean(track.default)
       };
     }).filter(Boolean);
-  return { url: parsed.toString(), type: "hls", label: serverName, quality: "Auto", subtitles };
+  return { url: parsed.toString(), type: "hls", label: serverName, quality: "Auto", subtitles, proxyReferer: embedUrl, proxyHosts: [...new Set([parsed.hostname, new URL(embedUrl).hostname])] };
 }
 
 export async function searchAnime(query) {
