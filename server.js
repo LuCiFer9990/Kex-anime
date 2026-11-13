@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveEpisode } from "./providers/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -68,11 +69,21 @@ app.get("/api/anime/:id", async (req, res) => {
     res.json(data.Media);
   } catch (e) { mapError(res, e); }
 });
-app.get("/api/anime/:id/sources/:episode", (req, res) => {
+app.get("/api/anime/:id/sources/:episode", async (req, res) => {
   const id = Number(req.params.id), episode = Number(req.params.episode);
   if (!Number.isSafeInteger(id) || !Number.isSafeInteger(episode) || id < 1 || episode < 1) return res.status(400).json({ error: "Invalid anime or episode id" });
-  const source = db.prepare("SELECT label,type,url FROM sources WHERE anime_id=? AND episode=?").get(id, episode);
-  res.json(source || null);
+
+  const configured = db.prepare("SELECT label,type,url FROM sources WHERE anime_id=? AND episode=?").get(id, episode);
+  if (configured) return res.json({ provider: "Site-configured source", sources: [{ ...configured, quality: "", subtitles: [] }] });
+
+  try {
+    const data = await query(mediaQuery, { id });
+    if (!data.Media) return res.status(404).json({ error: "Anime not found" });
+    const resolved = await resolveEpisode({ anime: data.Media, episode });
+    res.json(resolved || { provider: null, sources: [] });
+  } catch (e) {
+    res.status(502).json({ error: e.message || "Playback provider unavailable" });
+  }
 });
 
 app.get("/api/me/favorites", (req, res) => {
