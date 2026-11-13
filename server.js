@@ -10,6 +10,9 @@ import { resolveEpisode } from "./providers/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+// Render terminates TLS at its reverse proxy; trust that proxy so req.protocol
+// produces HTTPS playback URLs instead of mixed-content HTTP URLs in browsers.
+app.set("trust proxy", 1);
 const port = Number(process.env.PORT || 3000);
 const dbPath = process.env.DATABASE_PATH || path.join(__dirname, "data", "ani-cli-web.sqlite");
 fs.mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true });
