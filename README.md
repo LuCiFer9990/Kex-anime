@@ -6,6 +6,7 @@ A full-stack browser UI inspired by pystardust/ani-cli. It uses AniList for anim
 - Search and browse anime from AniList
 - Anime details, genres, ratings and episode selection
 - HLS (.m3u8) and MP4 playback in the browser
+- MP4 episode downloads with progress feedback (requires media-host CORS; HLS package downloads are not included)
 - Persistent favorites and watch progress
 - Admin API for authorized playback sources
 - Responsive mobile-first UI
