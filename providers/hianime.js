@@ -6,11 +6,11 @@ function decodeEntities(value = "") {
   return value.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#039;|&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
 }
 function attr(html, name) {
-  const match = html.match(new RegExp(`(?:^|\\\\s)${name}=["']([^"']*)["']`, "i"));
+  const match = html.match(new RegExp(`(?:^|\\s)${name}=["']([^"']*)["']`, "i"));
   return match ? decodeEntities(match[1]) : "";
 }
 function normalize(value) {
-  return String(value || "").toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+  return String(value || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 }
 async function getText(url, referer = BASE + "/") {
   const response = await fetch(url, {
@@ -39,7 +39,7 @@ export async function searchAnime(query) {
   const results = [];
   const blocks = html.split(/<div[^>]+class=["'][^"']*film-detail[^"']*["'][^>]*>/i).slice(1);
   for (const block of blocks) {
-    const href = block.match(/href=["'](?:https?:\\/\\/[^/]+)?\\/watch\\/([^"'?]+)/i);
+    const href = block.match(/href=["'](?:https?:\/\/[^/]+)?\/watch\/([^"'?]+)/i);
     const heading = block.match(/title=["']([^"']+)["']/i);
     if (!href || !heading) continue;
     const slug = href[1];
@@ -53,14 +53,14 @@ export async function searchAnime(query) {
 
 export async function getEpisodeMap(slug) {
   const id = String(slug).split("-").at(-1);
-  if (!/^\\d+$/.test(id)) throw new Error("Invalid HiAnime anime slug");
+  if (!/^\d+$/.test(id)) throw new Error("Invalid HiAnime anime slug");
   const html = await getText(new URL(`/api/theme/episode/list/${id}`, BASE).toString());
-  const normalized = html.replace(/\\\\+"/g, '"').replace(/\\\\\\//g, "/");
+  const normalized = html.replace(/\\+"/g, '"').replace(/\\\//g, "/");
   const episodes = [];
   for (const block of normalized.split(/ep-item/i).slice(1)) {
     const number = attr(block, "data-number");
     const episodeId = attr(block, "data-id");
-    if (number && /^\\d+$/.test(episodeId)) episodes.push({ number: Number(number), id: episodeId });
+    if (number && /^\d+$/.test(episodeId)) episodes.push({ number: Number(number), id: episodeId });
   }
   return episodes.sort((a, b) => a.number - b.number);
 }
@@ -81,7 +81,7 @@ export async function resolveHiAnimeEpisode({ anime, episode }) {
 
   const serverUrl = new URL("/api/theme/episode/servers", BASE);
   serverUrl.searchParams.set("episodeId", selected.id);
-  const serverHtml = (await getText(serverUrl.toString())).replace(/\\\\+"/g, '"').replace(/\\\\\\//g, "/");
+  const serverHtml = (await getText(serverUrl.toString())).replace(/\\+"/g, '"').replace(/\\\//g, "/");
   const serverBlocks = serverHtml.split(/server-item/i).slice(1);
   const server = serverBlocks.find(block => /data-server-name=["']ZokoAnime["']/i.test(block)
     && /data-type=["']sub["']/i.test(block));
@@ -92,13 +92,13 @@ export async function resolveHiAnimeEpisode({ anime, episode }) {
   try { embedUrl = Buffer.from(encoded, "base64").toString("utf8"); new URL(embedUrl); }
   catch { throw new Error("The server returned an invalid embed URL"); }
   const embed = await getText(embedUrl, new URL(embedUrl).origin + "/");
-  const blob = embed.match(/window\\.__P\\s*=\\s*["']([^"']+)["']/)?.[1];
+  const blob = embed.match(/window\.__P\s*=\s*["']([^"']+)["']/)?.[1];
   if (!blob) throw new Error("The embed page did not expose a supported playlist configuration");
   let config;
   try { config = JSON.parse(deobfuscate(blob)); }
   catch { throw new Error("Could not parse the embed playlist configuration"); }
   const playlist = config.src || config.source || config.sources?.[0]?.src;
-  if (typeof playlist !== "string" || !/\\.m3u8(?:[?#]|$)/i.test(playlist)) {
+  if (typeof playlist !== "string" || !/\.m3u8(?:[?#]|$)/i.test(playlist)) {
     throw new Error("No HLS playlist was found in the embed configuration");
   }
   const parsedPlaylist = new URL(playlist, embedUrl);
