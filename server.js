@@ -77,13 +77,13 @@ function rewritePlaylist(text, finalUrl, req, referer, hosts) {
     if (target.protocol !== "https:" || !hosts.includes(target.hostname.toLowerCase())) return value;
     return makeStreamUrl(req, target.toString(), referer, hosts);
   };
-  return text.split(/\\r?\\n/).map(line => {
+  return text.split(/\r?\n/).map(line => {
     if (!line.trim()) return line;
     if (line.trim().startsWith("#")) {
       return line.replace(/URI="([^"]+)"/g, (_m, uri) => `URI="${rewrite(uri)}"`);
     }
     return rewrite(line);
-  }).join("\\n");
+  }).join("\n");
 }
 app.get("/stream/:token", async (req, res) => {
   try {
@@ -113,7 +113,7 @@ app.get("/stream/:token", async (req, res) => {
       return res.status(upstream?.status || 502).send("Upstream media request failed");
     }
     const contentType = upstream.headers.get("content-type") || "";
-    const isPlaylist = /mpegurl/i.test(contentType) || /\\.m3u8(?:$|[?#])/i.test(target.href);
+    const isPlaylist = /mpegurl/i.test(contentType) || /\.m3u8(?:$|[?#])/i.test(target.href);
     res.set("Access-Control-Allow-Origin", "*");
     res.set("Cache-Control", "no-store");
     if (isPlaylist) {
