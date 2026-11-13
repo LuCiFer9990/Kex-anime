@@ -2,6 +2,7 @@ import express from "express";
 import helmet from "helmet";
 import Database from "better-sqlite3";
 import crypto from "node:crypto";
+import { Readable } from "node:stream";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,6 +46,95 @@ const mediaFields = `id title { romaji english native } description(asHtml:false
 const mediaQuery = `query($id:Int){ Media(id:$id,type:ANIME){ ${mediaFields} } }`;
 const mapError = (res, e) => res.status(502).json({ error: e.message || "Upstream service unavailable" });
 
+// Signed, short-lived HLS relay URLs. Only provider-declared HTTPS hosts are reachable.
+const proxySecret = process.env.STREAM_PROXY_SECRET || crypto.randomBytes(32);
+const proxyHostsFromEnv = (process.env.HLS_PROXY_ALLOWED_HOSTS || "").split(",").map(x => x.trim().toLowerCase()).filter(Boolean);
+function signStreamTarget(payload) {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = crypto.createHmac("sha256", proxySecret).update(encoded).digest("base64url");
+  return encoded + "." + signature;
+}
+function readStreamTarget(token) {
+  const [encoded, signature, extra] = String(token).split(".");
+  if (!encoded || !signature || extra) throw new Error("Invalid stream token");
+  const expected = crypto.createHmac("sha256", proxySecret).update(encoded).digest();
+  let supplied;
+  try { supplied = Buffer.from(signature, "base64url"); } catch { throw new Error("Invalid stream token"); }
+  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) throw new Error("Invalid stream token");
+  const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+  if (!payload.exp || payload.exp < Date.now() || !Array.isArray(payload.hosts)) throw new Error("Stream link expired");
+  const target = new URL(payload.url);
+  if (target.protocol !== "https:" || !payload.hosts.includes(target.hostname.toLowerCase())) throw new Error("Stream host is not allowed");
+  return payload;
+}
+function makeStreamUrl(req, url, referer, hosts) {
+  const token = signStreamTarget({ url, referer, hosts, exp: Date.now() + 3 * 60 * 60 * 1000 });
+  return `${req.protocol}://${req.get("host")}/stream/${token}`;
+}
+function rewritePlaylist(text, finalUrl, req, referer, hosts) {
+  const rewrite = value => {
+    const target = new URL(value.trim(), finalUrl);
+    if (target.protocol !== "https:" || !hosts.includes(target.hostname.toLowerCase())) return value;
+    return makeStreamUrl(req, target.toString(), referer, hosts);
+  };
+  return text.split(/\\r?\\n/).map(line => {
+    if (!line.trim()) return line;
+    if (line.trim().startsWith("#")) {
+      return line.replace(/URI="([^"]+)"/g, (_m, uri) => `URI="${rewrite(uri)}"`);
+    }
+    return rewrite(line);
+  }).join("\\n");
+}
+app.get("/stream/:token", async (req, res) => {
+  try {
+    const payload = readStreamTarget(req.params.token);
+    let target = new URL(payload.url);
+    let upstream;
+    for (let redirects = 0; redirects <= 4; redirects++) {
+      if (target.protocol !== "https:" || !payload.hosts.includes(target.hostname.toLowerCase())) {
+        return res.status(403).send("Redirect host is not allowed");
+      }
+      upstream = await fetch(target, {
+        headers: {
+          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+          "referer": payload.referer,
+          "accept": "*/*",
+          ...(req.get("range") ? { range: req.get("range") } : {})
+        },
+        redirect: "manual",
+        signal: AbortSignal.timeout(20000)
+      });
+      if (![301, 302, 303, 307, 308].includes(upstream.status)) break;
+      const location = upstream.headers.get("location");
+      if (!location || redirects === 4) return res.status(502).send("Too many upstream redirects");
+      target = new URL(location, target);
+    }
+    if (!upstream || !upstream.ok && upstream.status !== 206) {
+      return res.status(upstream?.status || 502).send("Upstream media request failed");
+    }
+    const contentType = upstream.headers.get("content-type") || "";
+    const isPlaylist = /mpegurl/i.test(contentType) || /\\.m3u8(?:$|[?#])/i.test(target.href);
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Cache-Control", "no-store");
+    if (isPlaylist) {
+      const body = await upstream.text();
+      const hosts = payload.hosts;
+      res.type("application/vnd.apple.mpegurl").send(rewritePlaylist(body, target, req, payload.referer, hosts));
+      return;
+    }
+    for (const header of ["content-range", "accept-ranges", "content-length"]) {
+      const value = upstream.headers.get(header);
+      if (value) res.set(header, value);
+    }
+    if (contentType) res.set("Content-Type", contentType);
+    res.status(upstream.status);
+    if (!upstream.body) return res.end();
+    Readable.fromWeb(upstream.body).pipe(res);
+  } catch (error) {
+    res.status(400).send(error.message || "Invalid stream request");
+  }
+});
+
 app.get("/api/anime/trending", async (req, res) => {
   try {
     const sort = ["TRENDING_DESC", "POPULARITY_DESC", "SCORE_DESC"].includes(req.query.sort) ? req.query.sort : "TRENDING_DESC";
@@ -80,6 +170,18 @@ app.get("/api/anime/:id/sources/:episode", async (req, res) => {
     const data = await query(mediaQuery, { id });
     if (!data.Media) return res.status(404).json({ error: "Anime not found" });
     const resolved = await resolveEpisode({ anime: data.Media, episode });
+    if (resolved?.sources) {
+      resolved.sources = resolved.sources.map(source => {
+        if (source.type !== "hls" || !source.proxyReferer || !Array.isArray(source.proxyHosts)) return source;
+        const hosts = [...new Set([...source.proxyHosts, ...proxyHostsFromEnv].map(x => String(x).toLowerCase()))];
+        const url = new URL(source.url);
+        if (url.protocol !== "https:" || !hosts.includes(url.hostname.toLowerCase())) return source;
+        const proxied = { ...source, url: makeStreamUrl(req, url.toString(), source.proxyReferer, hosts) };
+        delete proxied.proxyReferer;
+        delete proxied.proxyHosts;
+        return proxied;
+      });
+    }
     res.json(resolved || { provider: null, sources: [] });
   } catch (e) {
     res.status(502).json({ error: e.message || "Playback provider unavailable" });
