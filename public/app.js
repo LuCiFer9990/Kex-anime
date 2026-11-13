@@ -52,12 +52,7 @@ if(source.type==="hls"&&window.Hls&&Hls.isSupported()){
     quality.innerHTML='<option value="-1">Auto quality</option>'+state.hls.levels.map((level,index)=>`<option value="${index}">${level.height?level.height+"p":Math.round(level.bitrate/1000)+" kbps"}</option>`).join("");
     quality.hidden=state.hls.levels.length<2;
   });
-  state.hls.on(Hls.Events.ERROR,(_event,data)=>{
-    console.warn("[player] hls.js error",data.type,data.details,data.response?.code,data);
-    if(!data.fatal)return;
-    if(data.type===Hls.ErrorTypes.MEDIA_ERROR&&!state.mediaRecovered){state.mediaRecovered=true;state.hls.recoverMediaError();return}
-    $("#player-message").textContent=describeHlsError(data);
-  });
+  state.hls.on(Hls.Events.ERROR,(_event,data)=>{if(data.fatal){const status=data.response?.code?` HTTP ${data.response.code}`:"";const detail=data.details||data.type||"unknown HLS error";$("#player-message").textContent=`Playback error: ${detail}${status}. Check the stream source, provider session, and media-host CORS permissions.`;console.error("Fatal HLS playback error",data)}});
   quality.onchange=()=>{if(state.hls)state.hls.currentLevel=Number(quality.value)};
   state.hls.loadSource(source.url);state.hls.attachMedia(video);
 }else if(source.type==="hls"&&video.canPlayType("application/vnd.apple.mpegurl")){video.src=source.url}
