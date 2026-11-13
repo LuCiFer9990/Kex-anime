@@ -1,0 +1,14 @@
+services:
+  ani-cli-web:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN in your environment}
+      DATABASE_PATH: /app/data/ani-cli-web.sqlite
+    volumes:
+      - ani_data:/app/data
+    restart: unless-stopped
+volumes:
+  ani_data:
