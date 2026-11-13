@@ -170,18 +170,6 @@ app.get("/api/anime/:id/sources/:episode", async (req, res) => {
     const data = await query(mediaQuery, { id });
     if (!data.Media) return res.status(404).json({ error: "Anime not found" });
     const resolved = await resolveEpisode({ anime: data.Media, episode });
-    if (resolved?.sources) {
-      resolved.sources = resolved.sources.map(source => {
-        if (source.type !== "hls" || !source.proxyReferer || !Array.isArray(source.proxyHosts)) return source;
-        const hosts = [...new Set([...source.proxyHosts, ...proxyHostsFromEnv].map(x => String(x).toLowerCase()))];
-        const url = new URL(source.url);
-        if (url.protocol !== "https:" || !hosts.includes(url.hostname.toLowerCase())) return source;
-        const proxied = { ...source, fallbackUrl: source.url, url: makeStreamUrl(req, url.toString(), source.proxyReferer, hosts) };
-        delete proxied.proxyReferer;
-        delete proxied.proxyHosts;
-        return proxied;
-      });
-    }
     res.json(resolved || { provider: null, sources: [] });
   } catch (e) {
     res.status(502).json({ error: e.message || "Playback provider unavailable" });
