@@ -74,7 +74,7 @@ app.get("/api/anime/:id/sources/:episode", async (req, res) => {
   if (!Number.isSafeInteger(id) || !Number.isSafeInteger(episode) || id < 1 || episode < 1) return res.status(400).json({ error: "Invalid anime or episode id" });
 
   const configured = db.prepare("SELECT label,type,url FROM sources WHERE anime_id=? AND episode=?").get(id, episode);
-  if (configured) return res.json({ provider: "Site-configured source", sources: [{ ...configured, quality: "", subtitles: [] }] });
+  if (configured) return res.json({ provider: "Site-configured source", configured: true, sources: [{ ...configured, quality: "", subtitles: [] }] });
 
   try {
     const data = await query(mediaQuery, { id });
