@@ -6,7 +6,7 @@ function decodeEntities(value = "") {
   return value.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#039;|&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
 }
 function attr(html, name) {
-  const match = html.match(new RegExp(`(?:^|\\s)${name}=["']([^"']*)["']`, "i"));
+  const match = html.match(new RegExp('(?:^|\\s)' + name + '=["\\x27]([^"\\x27]*)["\\x27]', "i"));
   return match ? decodeEntities(match[1]) : "";
 }
 function normalize(value) {
@@ -19,7 +19,7 @@ async function getText(url, referer = BASE + "/") {
     signal: AbortSignal.timeout(15000)
   });
   const body = await response.text();
-  if (!response.ok) throw new Error(`HiAnime returned HTTP ${response.status}`);
+  if (!response.ok) throw new Error('Upstream returned HTTP ' + response.status + ' for ' + new URL(url).pathname);
   if (/Just a moment|cf-chl-|challenge-platform/i.test(body.slice(0, 5000))) {
     throw new Error("HiAnime blocked this server request. The scraper does not bypass anti-bot checks.");
   }
@@ -30,6 +30,58 @@ function deobfuscate(value) {
   const decoded = Buffer.alloc(bytes.length);
   for (let i = 0; i < bytes.length; i++) decoded[i] = bytes[i] ^ KEY[i % KEY.length];
   return decoded.toString("utf8");
+}
+function normalizeMarkup(value) {
+  return String(value || "").replace(/\\+"/g, '"').replace(/\\\//g, "/");
+}
+function extractServers(markup) {
+  const blocks = normalizeMarkup(markup).split(/server-item/i).slice(1);
+  return blocks.filter(block => /data-type=["']sub["']/i.test(block))
+    .map(block => ({
+      name: attr(block, "data-server-name") || attr(block, "data-server-id") || "Unknown server",
+      encoded: attr(block, "data-hash")
+    }))
+    .filter(server => server.encoded);
+}
+function decodeEmbedUrl(encoded) {
+  let value;
+  try { value = Buffer.from(encoded, "base64").toString("utf8"); }
+  catch { throw new Error("Invalid encoded embed URL"); }
+  let url;
+  try { url = new URL(value); }
+  catch { throw new Error("Server returned an invalid embed URL"); }
+  if (url.protocol !== "https:") throw new Error("Embed URL must use HTTPS");
+  return url.toString();
+}
+function extractConfig(embed) {
+  const blob = embed.match(/window\.__P\s*=\s*["']([^"']+)["']/)?.[1];
+  if (!blob) throw new Error("Embed page has no supported playlist configuration");
+  let config;
+  try { config = JSON.parse(deobfuscate(blob)); }
+  catch { throw new Error("Embed playlist configuration could not be decoded"); }
+  const playlist = config.src || config.source || config.sources?.[0]?.src;
+  if (typeof playlist !== "string" || !/\.m3u8(?:[?#]|$)/i.test(playlist)) {
+    throw new Error("Embed configuration contains no HLS playlist");
+  }
+  return { config, playlist };
+}
+function buildSource(config, playlist, embedUrl, serverName) {
+  const parsed = new URL(playlist, embedUrl);
+  if (parsed.protocol !== "https:") throw new Error("Playlist URL must use HTTPS");
+  const subtitles = (Array.isArray(config.subtitles) ? config.subtitles : [])
+    .filter(track => typeof track.src === "string")
+    .slice(0, 8)
+    .map(track => {
+      const url = new URL(track.src, embedUrl);
+      if (url.protocol !== "https:") return null;
+      return {
+        url: url.toString(),
+        label: String(track.label || track.lang || "Subtitles").slice(0, 60),
+        lang: String(track.lang || "und").slice(0, 12),
+        default: Boolean(track.default)
+      };
+    }).filter(Boolean);
+  return { url: parsed.toString(), type: "hls", label: serverName, quality: "Auto", subtitles };
 }
 
 export async function searchAnime(query) {
@@ -44,7 +96,6 @@ export async function searchAnime(query) {
     if (!href || !heading) continue;
     const slug = href[1];
     const title = decodeEntities(heading[1]);
-
     if (slug && title) results.push({ slug, title });
     if (results.length >= 20) break;
   }
@@ -54,10 +105,9 @@ export async function searchAnime(query) {
 export async function getEpisodeMap(slug) {
   const id = String(slug).split("-").at(-1);
   if (!/^\d+$/.test(id)) throw new Error("Invalid HiAnime anime slug");
-  const html = await getText(new URL(`/api/theme/episode/list/${id}`, BASE).toString());
-  const normalized = html.replace(/\\+"/g, '"').replace(/\\\//g, "/");
+  const html = normalizeMarkup(await getText(new URL('/api/theme/episode/list/' + id, BASE).toString()));
   const episodes = [];
-  for (const block of normalized.split(/ep-item/i).slice(1)) {
+  for (const block of html.split(/ep-item/i).slice(1)) {
     const number = attr(block, "data-number");
     const episodeId = attr(block, "data-id");
     if (number && /^\d+$/.test(episodeId)) episodes.push({ number: Number(number), id: episodeId });
@@ -77,49 +127,26 @@ export async function resolveHiAnimeEpisode({ anime, episode }) {
 
   const episodes = await getEpisodeMap(match.slug);
   const selected = episodes.find(item => item.number === Number(episode));
-  if (!selected) throw new Error(`Episode ${episode} was not found on HiAnime`);
+  if (!selected) throw new Error('Episode ' + episode + ' was not found on HiAnime');
 
   const serverUrl = new URL("/api/theme/episode/servers", BASE);
   serverUrl.searchParams.set("episodeId", selected.id);
-  const serverHtml = (await getText(serverUrl.toString())).replace(/\\+"/g, '"').replace(/\\\//g, "/");
-  const serverBlocks = serverHtml.split(/server-item/i).slice(1);
-  const server = serverBlocks.find(block => /data-server-name=["']ZokoAnime["']/i.test(block)
-    && /data-type=["']sub["']/i.test(block));
-  if (!server) throw new Error("HiAnime did not return the supported ZokoAnime sub server");
-  const encoded = attr(server, "data-hash");
-  if (!encoded) throw new Error("The selected server did not include an embed link");
-  let embedUrl;
-  try { embedUrl = Buffer.from(encoded, "base64").toString("utf8"); new URL(embedUrl); }
-  catch { throw new Error("The server returned an invalid embed URL"); }
-  const embed = await getText(embedUrl, new URL(embedUrl).origin + "/");
-  const blob = embed.match(/window\.__P\s*=\s*["']([^"']+)["']/)?.[1];
-  if (!blob) throw new Error("The embed page did not expose a supported playlist configuration");
-  let config;
-  try { config = JSON.parse(deobfuscate(blob)); }
-  catch { throw new Error("Could not parse the embed playlist configuration"); }
-  const playlist = config.src || config.source || config.sources?.[0]?.src;
-  if (typeof playlist !== "string" || !/\.m3u8(?:[?#]|$)/i.test(playlist)) {
-    throw new Error("No HLS playlist was found in the embed configuration");
+  const servers = extractServers(await getText(serverUrl.toString()));
+  if (!servers.length) throw new Error("HiAnime returned no subtitle servers with embed links");
+
+  // Prefer the previously supported server, then try other publicly listed subtitle servers.
+  const ordered = [...servers].sort((a, b) => Number(/zokoanime/i.test(b.name)) - Number(/zokoanime/i.test(a.name)));
+  const failures = [];
+  for (const server of ordered) {
+    try {
+      const embedUrl = decodeEmbedUrl(server.encoded);
+      const embed = await getText(embedUrl, new URL(embedUrl).origin + "/");
+      const { config, playlist } = extractConfig(embed);
+      const source = buildSource(config, playlist, embedUrl, server.name);
+      return { provider: 'HiAnime · ' + match.title, sources: [source] };
+    } catch (error) {
+      failures.push(server.name + ': ' + (error.message || 'unsupported response'));
+    }
   }
-  const parsedPlaylist = new URL(playlist, embedUrl);
-  if (parsedPlaylist.protocol !== "https:") throw new Error("The provider returned a non-HTTPS playlist");
-
-  const subtitles = (Array.isArray(config.subtitles) ? config.subtitles : [])
-    .filter(track => typeof track.src === "string")
-    .slice(0, 8)
-    .map(track => {
-      const url = new URL(track.src, embedUrl);
-      if (url.protocol !== "https:") return null;
-      return {
-        url: url.toString(),
-        label: String(track.label || track.lang || "Subtitles").slice(0, 60),
-        lang: String(track.lang || "und").slice(0, 12),
-        default: Boolean(track.default)
-      };
-    }).filter(Boolean);
-
-  return {
-    provider: `HiAnime · ${match.title}`,
-    sources: [{ url: parsedPlaylist.toString(), type: "hls", label: "ZokoAnime", quality: "Auto", subtitles }]
-  };
+  throw new Error('No listed subtitle server returned a supported HLS playlist. ' + failures.slice(0, 4).join(' | '));
 }
