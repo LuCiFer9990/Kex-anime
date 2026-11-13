@@ -74,13 +74,15 @@ app.get("/api/anime/:id/sources/:episode", async (req, res) => {
   if (!Number.isSafeInteger(id) || !Number.isSafeInteger(episode) || id < 1 || episode < 1) return res.status(400).json({ error: "Invalid anime or episode id" });
 
   const configured = db.prepare("SELECT label,type,url FROM sources WHERE anime_id=? AND episode=?").get(id, episode);
-  if (configured) return res.json({ provider: "Site-configured source", sources: [{ ...configured, quality: "", subtitles: [] }] });
+  if (configured) return res.json({ status: "ready", provider: "Site-configured source", sources: [{ ...configured, quality: "", subtitles: [] }] });
 
   try {
     const data = await query(mediaQuery, { id });
     if (!data.Media) return res.status(404).json({ error: "Anime not found" });
     const resolved = await resolveEpisode({ anime: data.Media, episode });
-    res.json(resolved || { provider: null, sources: [] });
+    if (!resolved) return res.json({ status: "not_configured", provider: null, sources: [], message: "Playback is not configured yet. Set PLAYBACK_PROVIDER_URL to an HTTPS API you own or are authorized to use, or add an authorized HLS/MP4 source with the admin API." });
+    const sources = Array.isArray(resolved.sources) ? resolved.sources : [];
+    res.json({ ...resolved, status: sources.length ? "ready" : "no_sources", sources, message: sources.length ? null : "The configured provider did not return a playable source for this episode." });
   } catch (e) {
     res.status(502).json({ error: e.message || "Playback provider unavailable" });
   }
