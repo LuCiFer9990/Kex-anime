@@ -47,14 +47,36 @@ quality.hidden=true;
 video.querySelectorAll("track").forEach(track=>track.remove());
 (source.subtitles||[]).forEach(track=>{const el=document.createElement("track");el.kind="subtitles";el.src=track.url;el.srclang=track.lang||"und";el.label=track.label||"Subtitles";el.default=Boolean(track.default);video.appendChild(el)});
 if(source.type==="hls"&&window.Hls&&Hls.isSupported()){
-  state.hls=new Hls({enableWorker:true});
-  state.hls.on(Hls.Events.MANIFEST_PARSED,()=>{
-    quality.innerHTML='<option value="-1">Auto quality</option>'+state.hls.levels.map((level,index)=>`<option value="${index}">${level.height?level.height+"p":Math.round(level.bitrate/1000)+" kbps"}</option>`).join("");
-    quality.hidden=state.hls.levels.length<2;
-  });
-  state.hls.on(Hls.Events.ERROR,(_event,data)=>{if(data.fatal){const status=data.response?.code?` HTTP ${data.response.code}`:"";const detail=data.details||data.type||"unknown HLS error";$("#player-message").textContent=`Playback error: ${detail}${status}. Check the stream source, provider session, and media-host CORS permissions.`;console.error("Fatal HLS playback error",data)}});
+  let usingDirectFallback=false;
+  const attachHls=(url)=>{
+    const player=new Hls({enableWorker:true});
+    state.hls=player;
+    player.on(Hls.Events.MANIFEST_PARSED,()=>{
+      quality.innerHTML='<option value="-1">Auto quality</option>'+player.levels.map((level,index)=>`<option value="${index}">${level.height?level.height+"p":Math.round(level.bitrate/1000)+" kbps"}</option>`).join("");
+      quality.hidden=player.levels.length<2;
+      $("#player-message").textContent=usingDirectFallback?"Trying the original provider stream URL…":`Source: ${source.label||result.provider||"Playback provider"}.`;
+    });
+    player.on(Hls.Events.ERROR,(_event,data)=>{
+      if(!data.fatal)return;
+      const code=data.response?.code;
+      if(code===403&&source.fallbackUrl&&!usingDirectFallback){
+        usingDirectFallback=true;
+        player.destroy();
+        state.hls=null;
+        $("#player-message").textContent="Relay request was denied (HTTP 403). Retrying the original provider stream URL…";
+        attachHls(source.fallbackUrl);
+        return;
+      }
+      const status=code?` HTTP ${code}`:"";
+      const detail=data.details||data.type||"unknown HLS error";
+      $("#player-message").textContent=`Playback error: ${detail}${status}. ${usingDirectFallback?"The original provider URL was also rejected.":"The provider relay request was rejected."}`;
+      console.error("Fatal HLS playback error",data);
+    });
+    player.loadSource(url);
+    player.attachMedia(video);
+  };
   quality.onchange=()=>{if(state.hls)state.hls.currentLevel=Number(quality.value)};
-  state.hls.loadSource(source.url);state.hls.attachMedia(video);
+  attachHls(source.url);
 }else if(source.type==="hls"&&video.canPlayType("application/vnd.apple.mpegurl")){video.src=source.url}
 else if(source.type==="mp4"){video.src=source.url}
 else{$("#player-message").textContent="This browser cannot play this stream format.";return}
