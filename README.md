@@ -64,7 +64,7 @@ The endpoint should return JSON in this shape:
 }
 ```
 
-Only HTTPS source and subtitle URLs are accepted. The player uses HLS.js where supported, offers adaptive/manual HLS quality selection, and attaches WebVTT subtitle tracks. Native HLS quality selection is handled by the browser. Cross-origin media and subtitle hosts must permit playback from your app origin. The adapter does not scrape third-party streaming sites, defeat DRM, or bypass provider access controls. A compatible provider API and its authorization are required; no provider is bundled or enabled by default. Manual admin-configured sources continue to take precedence.
+Only HTTPS source and subtitle URLs are accepted. The player uses HLS.js where supported, offers adaptive/manual HLS quality selection, and attaches WebVTT subtitle tracks. Native HLS quality selection is handled by the browser. Cross-origin media and subtitle hosts must permit playback from your app origin. The adapter does not scrape third-party streaming sites, defeat DRM, or bypass provider access controls. A compatible provider API and its authorization are required; no provider is bundled or enabled by default. Manual admin-configured sources continue to take precedence. If playback is not configured, the episode API returns `status: "not_configured"` with setup guidance; if the provider is configured but has no source for an episode, it returns `status: "no_sources"`. A successful source response returns `status: "ready"`.
 
 ## API
 - GET /api/anime/trending
