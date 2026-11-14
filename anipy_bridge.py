@@ -6,7 +6,7 @@ not automate CAPTCHA solving, authentication bypasses, or DRM circumvention.
 from difflib import SequenceMatcher
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from anipy_api.provider import LanguageTypeEnum, list_providers
@@ -57,7 +57,7 @@ def providers():
 
 
 @app.get("/search")
-def search(q: str = Field(min_length=1, max_length=100), provider: str | None = None):
+def search(q: str = Query(min_length=1, max_length=100), provider: str | None = None):
     found = []
     failures = []
     classes = provider_classes()
