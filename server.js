@@ -99,6 +99,37 @@ function rewritePlaylist(text, finalUrl, req, referer, hosts) {
     return rewrite(line);
   }).join("\n");
 }
+// Inspect a small byte range to identify opaque provider URLs.
+app.get("/stream-info/:token", async (req, res) => {
+  try {
+    const payload = readStreamTarget(req.params.token);
+    let target = new URL(payload.url);
+    let upstream;
+    for (let redirects = 0; redirects <= 4; redirects++) {
+      if (target.protocol !== "https:" || !payload.hosts.includes(target.hostname.toLowerCase())) return res.status(403).json({ error: "Redirect host is not allowed" });
+      upstream = await fetch(target, {
+        headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36", "referer": payload.referer, "accept": "*/*", "range": "bytes=0-1023" },
+        redirect: "manual", signal: AbortSignal.timeout(12000)
+      });
+      if (![301, 302, 303, 307, 308].includes(upstream.status)) break;
+      const location = upstream.headers.get("location");
+      if (!location || redirects === 4) return res.status(502).json({ error: "Too many upstream redirects" });
+      target = new URL(location, target);
+    }
+    if (!upstream || (!upstream.ok && upstream.status !== 206)) return res.status(upstream?.status || 502).json({ error: "Upstream media request failed" });
+    const contentType = (upstream.headers.get("content-type") || "").toLowerCase();
+    const reader = upstream.body?.getReader();
+    const first = reader ? await reader.read() : { value: new Uint8Array() };
+    if (reader) await reader.cancel().catch(() => {});
+    const bytes = first.value || new Uint8Array();
+    const prefix = new TextDecoder().decode(bytes.slice(0, 1024)).replace(/^\uFEFF/, "").trimStart();
+    const isHls = /mpegurl/.test(contentType) || /\.m3u8(?:$|[?#])/i.test(target.href) || prefix.startsWith("#EXTM3U");
+    const isMp4 = /video\/(mp4|iso.segment)/.test(contentType) || /\.mp4(?:$|[?#])/i.test(target.href) || (bytes.length >= 8 && String.fromCharCode(...bytes.slice(4, 8)) === "ftyp");
+    res.set("Cache-Control", "no-store");
+    return res.json({ type: isHls ? "hls" : isMp4 ? "mp4" : "unsupported", contentType });
+  } catch (error) { return res.status(400).json({ error: error.message || "Unable to inspect stream" }); }
+});
+
 app.get("/stream/:token", async (req, res) => {
   try {
     const payload = readStreamTarget(req.params.token);
