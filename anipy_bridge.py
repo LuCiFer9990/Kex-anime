@@ -91,7 +91,7 @@ class ResolveRequest(BaseModel):
 def resolve(body: ResolveRequest):
     wanted = " ".join(body.title.lower().split())
     lang_name = body.language.lower()
-    lang = LanguageTypeEnum.DUB if lang_name == "dub" else LanguageTypeEnum.SUB
+    requested_lang = LanguageTypeEnum.DUB if lang_name == "dub" else LanguageTypeEnum.SUB
     classes = provider_classes()
     if body.provider:
         classes = [cls for cls in classes if cls.NAME.lower() == body.provider.lower()]
@@ -118,19 +118,15 @@ def resolve(body: ResolveRequest):
             ).ratio()
             if score < 0.42:
                 continue
+            lang = requested_lang
             if lang not in match.languages:
-                if lang_name == "dub" and LanguageTypeEnum.SUB in match.languages:
-                    lang = LanguageTypeEnum.SUB
-                elif lang_name != "dub" and LanguageTypeEnum.DUB in match.languages:
-                    lang = LanguageTypeEnum.DUB
-                else:
-                    continue
+                continue
             episodes = instance.get_episodes(match.identifier, lang)
             episode = next((ep for ep in episodes if float(ep) == body.episode), None)
             if episode is None:
                 continue
             streams = instance.get_video(match.identifier, episode, lang)
-            streams.sort(key=lambda item: item.resolution)
+            streams.sort(key=lambda item: item.resolution, reverse=True)
             if not streams:
                 continue
             return {
