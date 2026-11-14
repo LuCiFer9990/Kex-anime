@@ -158,7 +158,17 @@ app.get("/stream/:token", async (req, res) => {
       return res.status(upstream?.status || 502).send("Upstream media request failed");
     }
     const contentType = upstream.headers.get("content-type") || "";
-    const isPlaylist = /mpegurl/i.test(contentType) || /\.m3u8(?:$|[?#])/i.test(target.href);
+    // Some providers expose HLS playlists at extensionless URLs with a generic
+    // MIME type. Sniff a cloned response so the original stream remains intact.
+    let playlistPrefix = "";
+    if (!/mpegurl/i.test(contentType) && !/\.m3u8(?:$|[?#])/i.test(target.href) && upstream.body) {
+      const sniff = upstream.clone();
+      const reader = sniff.body.getReader();
+      const first = await reader.read();
+      playlistPrefix = new TextDecoder().decode((first.value || new Uint8Array()).slice(0, 1024)).replace(/^\uFEFF/, "").trimStart();
+      await reader.cancel().catch(() => {});
+    }
+    const isPlaylist = /mpegurl/i.test(contentType) || /\.m3u8(?:$|[?#])/i.test(target.href) || playlistPrefix.startsWith("#EXTM3U");
     res.set("Access-Control-Allow-Origin", "*");
     res.set("Cache-Control", "no-store");
     if (isPlaylist) {
