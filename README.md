@@ -1,60 +1,80 @@
 # Ani-CLI Web
 
-A full-stack browser app inspired by `pystardust/ani-cli`. It uses AniList for catalog metadata, SQLite for favorites/watch progress, and a built-in HiAnime page scraper for episode-source lookup.
+A mobile-friendly anime discovery and playback interface powered by the official **anipy-api** provider library from [sdaqo/anipy-cli](https://github.com/sdaqo/anipy-cli). AniList remains the metadata catalogue; all episode-source search and resolution is handled by anipy-api providers. The previous site-specific HiAnime scraper has been removed.
 
 ## Features
-- Search and browse anime from AniList
+- Search and browse anime using AniList metadata
 - Anime details, genres, ratings and episode selection
-- Built-in website scraper: search page → episode list → server list → embed page → HLS playlist
-- HLS.js/native HLS playback and subtitle tracks when the media host permits browser playback
-- MP4 episode downloads with progress feedback (HLS downloads are not included)
+- Episode source search and resolution through registered anipy-api providers
+- Provider quality selection and subtitle tracks when supplied by the provider
+- HLS.js/native HLS playback, subject to media-host browser/CORS support
+- External-player handoff (VLC / MX Player) and stream-link copying
+- MP4 downloads when the provider returns a directly downloadable MP4 source
 - Persistent favorites and watch progress
-- Admin API for manually configured authorized HLS/MP4 sources
 
-## Requirements
-Node.js 20+ and npm.
+## Runtime requirements
+- Node.js 20+
+- Python 3.10+
+- A persistent writable data directory for SQLite
+
+The Docker image installs Node.js, Python and the pinned anipy-api dependency, then runs the Node web server and the small Python bridge in the same container.
 
 ## Run locally
+
 ```bash
-cp .env.example .env
 npm install
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Start the provider bridge in one terminal:
+
+```bash
+uvicorn anipy_bridge:app --host 127.0.0.1 --port 8000
+```
+
+Start the website in another terminal:
+
+```bash
 npm start
 ```
-Open http://localhost:3000.
 
-## Built-in scraper
-The default playback resolver makes normal HTTPS page requests to the site configured by `HIANIME_BASE_URL`. It follows the same broad flow used by ani-cli: search the website, retrieve the selected anime's episode markup, retrieve the episode's server markup, open the selected embed page, and read its exposed HLS playlist and subtitle tracks.
+Open http://localhost:3000. The default bridge URL is `http://127.0.0.1:8000`; set `ANIPY_API_URL` if the bridge runs elsewhere.
 
-The episode and server listing requests are the website's own internal page endpoints, not an external playback-provider service. No `PLAYBACK_PROVIDER_URL` or separate provider API needs to be configured.
-
-The scraper prefers the ZokoAnime subtitle server when it is listed, then tries other subtitle servers exposed by the page. It only accepts embed pages matching the currently implemented playlist format; other embed formats are reported as unsupported rather than guessed. Site markup, domains, embed formats and server names can change, so the integration may need maintenance when the site changes. Trying additional listed servers improves compatibility but does not guarantee that any source will be available or playable. It does not solve CAPTCHAs, evade Cloudflare or other anti-bot controls, defeat DRM, or bypass authentication/access restrictions. If the site blocks the server, the app reports the block rather than attempting to evade it.
-
-### Browser playback limitations
-Finding a playlist does not guarantee that a browser can play it. The media host must allow cross-origin requests from your app. Some streams also require request headers or session state that a browser video element cannot set. In those cases the scraper can resolve the source but playback may still fail; this app does not proxy or strip provider protections.
-
-Use this integration only for content and services you are authorized to access and stream, and comply with the source site's terms and applicable law.
-
-## Configure an authorized manual source
-AniList provides metadata, not video streams. You can still add a direct stream URL that you own or are authorized to distribute. Set `ADMIN_TOKEN`, then call:
+## Docker
 
 ```bash
-curl -X POST http://localhost:3000/api/admin/sources \
-  -H 'content-type: application/json' \
-  -H 'x-admin-token: YOUR_ADMIN_TOKEN' \
-  -d '{"animeId":21,"episode":1,"label":"Official stream","type":"hls","url":"https://your-authorized-host.example/video/episode-1.m3u8"}'
+docker compose up --build -d
 ```
 
-Supported types: `hls` and `mp4`. Manually configured sources take precedence over scraper lookup. Configure CORS on your media host to allow your app's origin.
+The compose file starts both services inside the app container and persists SQLite data in the `ani_data` volume. For a public deployment, use HTTPS and persistent storage.
+
+## Provider integration
+
+The backend imports `list_providers`, `LanguageTypeEnum`, and provider methods from `anipy_api.provider`. It searches the providers registered by the installed anipy-api release (excluding the local-filesystem provider), matches the requested title, checks the requested episode/language, and returns available stream qualities and subtitle metadata.
+
+The provider set is controlled by the installed anipy-api release. A provider can stop working when its upstream website changes; availability is not guaranteed. The bridge does not solve CAPTCHAs, evade anti-bot controls, bypass authentication, or defeat DRM.
+
+### Browser playback limitations
+
+A stream being resolved does not guarantee that a browser can play it. HLS media hosts may reject browser requests because of CORS, expiring URLs, required request headers, or unsupported codecs. The app relays media requests only to the HTTPS host returned by the provider and forwards the provider referrer; it does not bypass DRM or access controls. If browser playback is blocked, use the VLC / MX Player handoff when the device supports it.
+
+Use only content and services you are authorized to access and stream, and follow the source sites' terms and applicable law.
+
+## AniList and user data
+
+AniList supplies catalogue metadata only; it does not supply video streams. Favorites and watch progress are stored in SQLite and associated with an anonymous browser client ID. For public multi-user deployment, replace this with real authentication.
 
 ## API
 - GET /api/anime/trending
 - GET /api/anime/search?q=...
 - GET /api/anime/:id
-- GET /api/anime/:id/sources/:episode
+- GET /api/anime/:id/sources/:episode?language=sub|dub
 - GET/POST /api/me/favorites; DELETE /api/me/favorites/:animeId
 - GET/POST /api/me/progress
+- GET /api/health
 
-User state uses an anonymous browser client ID. For public multi-user deployment, replace it with real authentication.
+## Attribution and licensing
 
-## Deployment
-Deploy on a Node.js host with persistent disk storage. Set `ADMIN_TOKEN` and `DATABASE_PATH`, use HTTPS, and persist the data directory. Docker: `ADMIN_TOKEN=$(openssl rand -hex 32) docker compose up --build -d`.
+This project integrates [anipy-cli / anipy-api](https://github.com/sdaqo/anipy-cli), Copyright its respective contributors, licensed under GPL-3.0. See the upstream repository for its license and notices. Review GPL-3.0 obligations before distributing modified or combined builds.

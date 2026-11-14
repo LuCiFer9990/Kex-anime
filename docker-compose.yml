@@ -7,6 +7,7 @@ services:
       PORT: 3000
       ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN in your environment}
       DATABASE_PATH: /app/data/ani-cli-web.sqlite
+      ANIPY_API_URL: http://127.0.0.1:8000
     volumes:
       - ani_data:/app/data
     restart: unless-stopped

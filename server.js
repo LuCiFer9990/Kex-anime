@@ -6,7 +6,6 @@ import { Readable } from "node:stream";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveEpisode } from "./providers/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -48,6 +47,18 @@ const query = (text, variables = {}) => fetch("https://graphql.anilist.co", {
 const mediaFields = `id title { romaji english native } description(asHtml:false) coverImage { extraLarge large } bannerImage episodes averageScore seasonYear season format status genres duration studios { nodes { name } }`;
 const mediaQuery = `query($id:Int){ Media(id:$id,type:ANIME){ ${mediaFields} } }`;
 const mapError = (res, e) => res.status(502).json({ error: e.message || "Upstream service unavailable" });
+const anipyApiUrl = (process.env.ANIPY_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+async function resolveWithAnipy(title, episode, language = "sub") {
+  const response = await fetch(anipyApiUrl + "/resolve", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title, episode, language }),
+    signal: AbortSignal.timeout(90000)
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.detail || payload.error || `anipy-api returned HTTP ${response.status}`);
+  return payload;
+}
 
 // Signed, short-lived HLS relay URLs. Only provider-declared HTTPS hosts are reachable.
 const proxySecret = process.env.STREAM_PROXY_SECRET || crypto.randomBytes(32);
@@ -172,20 +183,25 @@ app.get("/api/anime/:id/sources/:episode", async (req, res) => {
   try {
     const data = await query(mediaQuery, { id });
     if (!data.Media) return res.status(404).json({ error: "Anime not found" });
-    const resolved = await resolveEpisode({ anime: data.Media, episode });
-    if (resolved?.sources) {
-      resolved.sources = resolved.sources.map(source => {
-        if (source.type !== "hls" || !source.proxyReferer || !Array.isArray(source.proxyHosts)) return source;
-        const hosts = [...new Set([...source.proxyHosts, ...proxyHostsFromEnv].map(x => String(x).toLowerCase()))];
-        const url = new URL(source.url);
-        if (url.protocol !== "https:" || !hosts.includes(url.hostname.toLowerCase())) return source;
-        const proxied = { ...source, fallbackUrl: source.url, url: makeStreamUrl(req, url.toString(), source.proxyReferer, hosts) };
-        delete proxied.proxyReferer;
-        delete proxied.proxyHosts;
-        return proxied;
-      });
-    }
-    res.json(resolved || { provider: null, sources: [] });
+    const title = data.Media.title?.english || data.Media.title?.romaji || data.Media.title?.native || "";
+    if (!title) return res.status(422).json({ error: "Anime title is missing" });
+    const resolved = await resolveWithAnipy(title, episode, String(req.query.language || "sub"));
+    const sources = (resolved.sources || []).map(source => {
+      let url;
+      try { url = new URL(source.url); } catch { return null; }
+      if (url.protocol !== "https:") return null;
+      const hosts = [url.hostname.toLowerCase()];
+      const proxyReferer = source.referrer || url.origin + "/";
+      const proxied = {
+        ...source,
+        label: `${resolved.provider} · ${source.quality || source.resolution + "p"}`,
+        fallbackUrl: source.url,
+        url: makeStreamUrl(req, url.toString(), proxyReferer, hosts)
+      };
+      delete proxied.referrer;
+      return proxied;
+    }).filter(Boolean);
+    res.json({ provider: resolved.provider, matchedAnime: resolved.matchedAnime, configured: true, sources });
   } catch (e) {
     res.status(502).json({ error: e.message || "Playback provider unavailable" });
   }
