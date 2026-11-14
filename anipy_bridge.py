@@ -37,7 +37,9 @@ def serialize_stream(stream: Any):
         })
     return {
         "url": stream.url,
-        "type": "hls" if ".m3u8" in stream.url.lower() else "mp4",
+        # Extensionless provider URLs are common; let the relay inspect the
+        # upstream response instead of incorrectly labelling them as MP4.
+        "type": "hls" if ".m3u8" in stream.url.lower() else ("mp4" if ".mp4" in stream.url.lower() else "auto"),
         "resolution": stream.resolution,
         "quality": f"{stream.resolution}p" if stream.resolution else "Auto",
         "language": stream.language.value,
