@@ -40,6 +40,19 @@ function playTestStream(){state.selected=null;state.episode=1;return playEpisode
 async function playEpisode(anime,episode,override=null){$("#detail").classList.remove("open");$("#watch").classList.add("open");$("#watch-title").textContent=title(anime);$("#watch-ep").textContent=`Episode ${episode}`;$("#player-message").textContent="Checking for a configured authorized stream…";$("#download-episode").disabled=true;$("#download-episode").textContent="↓ Download episode";$("#download-progress").hidden=true;$("#download-status").textContent="MP4 downloads only";state.downloadSource=null;$("#external-row").hidden=true;const video=$("#video");video.pause();video.removeAttribute("src");video.load();if(state.hls){state.hls.destroy();state.hls=null}state.mediaRecovered=false;try{const result=override||await api(`/api/anime/${anime.id}/sources/${episode}`);
 const source=result?.sources?.[0];
 if(!source){$("#player-message").textContent="No playable source was found for this episode. Check that the source site is reachable and that this episode has an available supported server.";return}
+if(source.type==="auto"){
+  try{
+    const token=new URL(source.url,location.origin).pathname.split("/").pop();
+    const infoResponse=await fetch(`/stream-info/${encodeURIComponent(token)}`);
+    const info=await infoResponse.json().catch(()=>({}));
+    if(!infoResponse.ok)throw Error(info.error||`Stream inspection failed (${infoResponse.status})`);
+    if(!["hls","mp4"].includes(info.type))throw Error(`Unsupported upstream media type: ${info.contentType||"unknown"}`);
+    source.type=info.type;
+  }catch(error){
+    $("#player-message").textContent=`Could not identify this stream format: ${error.message}`;
+    return;
+  }
+}
 state.downloadSource={source,anime,episode};setupExternalPlayer(result,source);
 const quality=$("#quality-select");
 quality.innerHTML='<option value="-1">Auto quality</option>';
